@@ -1,0 +1,61 @@
+{
+  "name": "@hyperglllc/site-kit",
+  "version": "1.0.0",
+  "description": "Connects a static Next.js website to HyperGL: page views, forms, booking, consent, and build-time posts and reviews.",
+  "license": "MIT",
+  "author": "HyperGL LLC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hypergl2026-sys/hypergl-site-kit.git"
+  },
+  "homepage": "https://github.com/hypergl2026-sys/hypergl-site-kit#readme",
+  "bugs": "https://github.com/hypergl2026-sys/hypergl-site-kit/issues",
+  "keywords": ["nextjs", "static-site", "forms", "booking", "consent", "leads"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./build": {
+      "types": "./dist/build.d.ts",
+      "import": "./dist/build.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "jsdom": "^25.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
