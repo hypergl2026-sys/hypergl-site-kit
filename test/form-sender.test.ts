@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { flushQueue, queued, sendEntry, fallbackMailto, QUEUE_KEY, type FormEntry } from '../src/form-sender';
+import { flushQueue, isBotCheckRefusal, queued, sendEntry, fallbackMailto, QUEUE_KEY, type FormEntry } from '../src/form-sender';
 
 /** A virtual clock: sleeping moves time forward instantly. */
 function clock(start = 1_000_000) {
@@ -65,6 +65,30 @@ describe('sendEntry', () => {
     expect(queued()).toEqual([]);
   });
 
+  it('a robot-check refusal is never "rejected": the fallback shows at once and the entry is kept', async () => {
+    for (const body of [{ error: 'The check that you’re not a robot didn’t pass. Try again.', code: 'BOT_CHECK' }, { error: 'The check that you’re not a robot didn’t pass. Try again.' }]) {
+      window.localStorage.clear();
+      const c = clock();
+      const net = fakeFetch([new Response(JSON.stringify(body), { status: 400 })]);
+      let fellBackAt: number | null = null;
+      const e = entry();
+      const r = await sendEntry(e, { fetchImpl: net.f, now: c.now, sleep: c.sleep, fallbackAfterMs: 60_000, onFallback: () => { fellBackAt ??= c.now(); } });
+      expect(r).toEqual({ status: 'unsent' });
+      expect(net.posts().length).toBe(1);            // retrying now won't help
+      expect(fellBackAt).not.toBeNull();
+      expect(fellBackAt! - 1_000_000).toBeLessThan(6000);   // at once, not after the usual wait
+      expect(queued().map((q) => q.id)).toEqual([e.id]);    // never lost
+    }
+  });
+
+  it('isBotCheckRefusal: only a 400 with the code or the robot wording', () => {
+    expect(isBotCheckRefusal(400, { code: 'BOT_CHECK' })).toBe(true);
+    expect(isBotCheckRefusal(400, { error: 'The check that you’re not a robot didn’t pass.' })).toBe(true);
+    expect(isBotCheckRefusal(400, { error: 'Please check the email address.' })).toBe(false);
+    expect(isBotCheckRefusal(404, { code: 'BOT_CHECK' })).toBe(false);
+    expect(isBotCheckRefusal(400, null)).toBe(false);
+  });
+
   it('waits until the ticket is 2 s old, and fetches a fresh one when it has expired', async () => {
     const c = clock();
     const net = fakeFetch([new Response(JSON.stringify({ error: 'This page was open a long time — reload it and send again.' }), { status: 400 }), ok()], 'fresh.ticket');
@@ -84,7 +108,7 @@ describe('sendEntry', () => {
     }) as unknown as typeof fetch;
     await sendEntry(entry({ endpoint: 'https://in.agency.example/' }), { fetchImpl: f, now: c.now, sleep: c.sleep });
     const post = calls.find((x) => x.init.method === 'POST')!;
-    expect(post.url).toMatch(/^https:\/\/in\.agency\.example\/api\/public\/v1\/f\/hf_abcdefghijklmnopqrstuvwx\?kv=1\.0\.0$/);
+    expect(post.url).toMatch(/^https:\/\/in\.agency\.example\/api\/public\/v1\/f\/hf_abcdefghijklmnopqrstuvwx\?kv=1\.0\.1$/);
     expect((post.init.headers as Record<string, string>)['Content-Type']).toMatch(/^text\/plain/);
     expect(post.init.credentials).toBe('omit');
   });
@@ -107,6 +131,15 @@ describe('the queue', () => {
     const net = fakeFetch([ok()]);
     expect(await flushQueue({ fetchImpl: net.f, now: c.now, sleep: c.sleep })).toBe(1);
     expect(net.posts().length).toBe(1);
+    expect(queued()).toEqual([]);
+  });
+
+  it('an entry kept after a robot-check refusal goes out on a later page load', async () => {
+    const c = clock(Date.now());
+    const e = entry({ createdAt: Date.now() - 60_000, turnstile: null });
+    window.localStorage.setItem(QUEUE_KEY, JSON.stringify([e]));
+    const net = fakeFetch([ok()]);
+    expect(await flushQueue({ fetchImpl: net.f, now: c.now, sleep: c.sleep })).toBe(1);
     expect(queued()).toEqual([]);
   });
 

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { HyperGLForm } from '../src/form';
+import { HyperGLBooking } from '../src/booking';
 import { ConsentBanner, ConsentGate } from '../src/consent-banner';
 import { HyperGLTracking } from '../src/tracking';
 import { getConsent } from '../src/consent';
@@ -78,12 +79,55 @@ describe('<HyperGLForm>', () => {
     expect(queued()).toEqual([]);
   }, 20_000);
 
+  it('Turnstile that errors on this domain: the form still sends; a robot-check refusal shows the email fallback and keeps the entry', async () => {
+    let rendered: Record<string, unknown> | null = null;
+    window.turnstile = { render: (_el, o) => { rendered = o; (o['error-callback'] as () => boolean)(); return 'w1'; }, reset: () => { throw new Error('no widget'); } };
+    const bodies: string[] = [];
+    globalThis.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') { bodies.push(String(init.body)); return new Response(JSON.stringify({ error: 'The check that you’re not a robot didn’t pass. Try again.', code: 'BOT_CHECK' }), { status: 400 }); }
+      return new Response(JSON.stringify({ ...CONFIG, turnstileSiteKey: '0x4AAAAAAA-test' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      await act(async () => { root.render(<HyperGLForm token="hf_abcdefghijklmnopqrstuvwx" fallbackEmail="hello@pulsefitness.example" />); });
+      await until(() => !!host.querySelector('form') && !!rendered);
+      type(host.querySelector('input[name="name"]')!, 'Ann Lee');
+      type(host.querySelector('input[name="email"]')!, 'ann@lee.test');
+      await act(async () => { host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+      await until(() => !!host.querySelector('.hg-fallback'));
+      expect(host.querySelector('.hg-fallback')!.textContent).toContain('Email us at hello@pulsefitness.example');
+      expect(host.querySelector('.hg-error')).toBeNull();
+      expect(JSON.parse(bodies[0]).turnstile).toBeNull();
+      expect(queued().length).toBe(1);
+    } finally { delete window.turnstile; }
+  }, 20_000);
+
   it('when the form can’t even load, it shows the email address', async () => {
     globalThis.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); }) as unknown as typeof fetch;
     await act(async () => { root.render(<HyperGLForm token="hf_abcdefghijklmnopqrstuvwx" fallbackEmail="hello@pulsefitness.example" />); });
     await until(() => !!host.querySelector('.hg-fallback'));
     expect(host.textContent).toContain('Email us at hello@pulsefitness.example');
   });
+});
+
+describe('<HyperGLBooking>', () => {
+  it('a robot-check refusal shows the email fallback, not an error the person can’t fix', async () => {
+    const start = '2026-12-01T15:00:00.000Z';
+    globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Response(JSON.stringify({ error: 'The check that you’re not a robot didn’t pass. Try again.', code: 'BOT_CHECK' }), { status: 400 });
+      if (String(url).includes('/slots')) return new Response(JSON.stringify({ tz: 'UTC', from: '2026-12-01', days: [{ date: '2026-12-01', slots: [start] }] }));
+      return new Response(JSON.stringify({ title: 'Book', tz: 'UTC', ticket: '1.t', turnstileSiteKey: null, types: [{ id: 't1', name: 'Checkup', durationMin: 30, questions: [], people: [{ id: 'p1', name: 'Dr. Reed' }] }] }));
+    }) as unknown as typeof fetch;
+    await act(async () => { root.render(<HyperGLBooking code="bk_abcdefghjkmn" fallbackEmail="hello@harbordental.example" />); });
+    await until(() => !!host.querySelector('.hg-time'));
+    await act(async () => { host.querySelector<HTMLButtonElement>('.hg-time')!.click(); });
+    await until(() => !!host.querySelector('input[type="email"]'));
+    type(host.querySelector('input[autocomplete="name"]')!, 'Ann Lee');
+    type(host.querySelector('input[type="email"]')!, 'ann@lee.test');
+    await act(async () => { host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    await until(() => !!host.querySelector('.hg-fallback'));
+    expect(host.querySelector('.hg-fallback')!.textContent).toContain('Email us at hello@harbordental.example');
+    expect(host.querySelector('.hg-error')).toBeNull();
+  }, 20_000);
 });
 
 describe('<ConsentBanner> and <ConsentGate>', () => {
@@ -114,7 +158,7 @@ describe('<HyperGLTracking>', () => {
     globalThis.fetch = vi.fn(async (url: string, init?: RequestInit) => { calls.push({ url, body: String(init?.body) }); return new Response(JSON.stringify({ m: 'require_banner' }), { status: 200 }); }) as unknown as typeof fetch;
     await act(async () => { root.render(<HyperGLTracking source="ls_abcdefghijklmnopqrstuvwx" endpoint="https://in.agency.example" />); });
     await until(() => calls.length > 0);
-    expect(calls[0].url).toBe('https://in.agency.example/api/public/v1/c/e?kv=1.0.0&s=ls_abcdefghijklmnopqrstuvwx');
+    expect(calls[0].url).toBe('https://in.agency.example/api/public/v1/c/e?kv=1.0.1&s=ls_abcdefghijklmnopqrstuvwx');
     expect(JSON.parse(calls[0].body)).toMatchObject({ t: 'view', v: null });
     await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
     expect(window.localStorage.getItem('hgl_vid')).toBeNull();

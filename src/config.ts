@@ -5,7 +5,7 @@
  * address, or the agency's domain / the ingestion hostname when HyperGL sets
  * it. The kit only ever calls the versioned `/api/public/v1/...` paths under it.
  */
-export const KIT_VERSION = '1.0.0';
+export const KIT_VERSION = '1.0.1';
 export const DEFAULT_ENDPOINT = 'https://app.hypergl.com';
 
 let endpoint = DEFAULT_ENDPOINT;

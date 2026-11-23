@@ -5,8 +5,9 @@
  * The client's HyperGL booking page, drawn on the site: pick a service, a
  * person (or anyone), a day and a time, then name and email. The booking and
  * its lead go into HyperGL. A booking is never queued for later (the time may
- * be gone): if HyperGL can't be reached, the widget says so and shows the
- * fallback email.
+ * be gone): if HyperGL can't be reached, or it refuses the booking at its
+ * robot check (which can't run on every domain), the widget says so and shows
+ * the fallback email.
  *
  * Styling: `hg-booking`, `hg-booking-step`, `hg-days`, `hg-day`, `hg-times`,
  * `hg-time`, plus the form classes (`hg-field`, `hg-label`, `hg-input`, …).
@@ -15,6 +16,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { kitUrl } from './config.js';
 import { attributionForForm } from './attribution.js';
 import { getConsent } from './consent.js';
+import { isBotCheckRefusal } from './form-sender.js';
 
 interface BookingType {
   id: string; name: string; durationMin: number;
@@ -103,9 +105,10 @@ export function HyperGLBooking({ code, fallbackEmail, endpoint, className, onBoo
       } else if (r.status >= 500 || r.status === 429) {
         setDown(true);
       } else {
-        let msg = 'That didn’t work. Please check and try again.';
-        try { msg = String(((await r.json()) as { error?: string }).error || msg); } catch { /* no body */ }
-        setError(msg);
+        let body: { error?: unknown; code?: unknown } | null = null;
+        try { body = (await r.json()) as { error?: unknown; code?: unknown }; } catch { /* no body */ }
+        if (isBotCheckRefusal(r.status, body)) setDown(true);
+        else setError(String(body?.error || 'That didn’t work. Please check and try again.'));
       }
     } catch { setDown(true); } finally { setBusy(false); }
   }
