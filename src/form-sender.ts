@@ -12,7 +12,11 @@
  *     loads (`flushQueue`). Old entries (7 days) are dropped.
  *
  * A 4xx with a message is the person's to fix ("Please check the email
- * address") and is not retried. The hosted-form endpoint wants a time ticket
+ * address") and is not retried. The one exception is the robot check
+ * (Cloudflare Turnstile, `code: 'BOT_CHECK'`): the person can't fix that — the
+ * widget may not run on this domain at all — so the entry is never dropped for
+ * it. The email fallback shows at once and the entry stays queued for the next
+ * page load. The hosted-form endpoint wants a time ticket
  * that is at least 2 s old: the sender waits for that, and fetches a fresh one
  * when the old one has expired or the entry comes from the queue.
  */
@@ -83,7 +87,13 @@ export function dequeue(id: string): void {
 
 // ─── One try ─────────────────────────────────────────────────────────────────
 
-type Try = { kind: 'sent' } | { kind: 'retry' } | { kind: 'rejected'; error: string } | { kind: 'stale-ticket' };
+type Try = { kind: 'sent' } | { kind: 'retry' } | { kind: 'rejected'; error: string } | { kind: 'stale-ticket' } | { kind: 'bot-check' };
+
+/** HyperGL's "you're not a robot" refusal: by its code, or (older APIs) its words. */
+export function isBotCheckRefusal(status: number, body: { error?: unknown; code?: unknown } | null): boolean {
+  if (status !== 400 || !body) return false;
+  return body.code === 'BOT_CHECK' || /robot/i.test(String(body.error ?? ''));
+}
 
 async function withTimeout(f: typeof fetch, url: string, init: RequestInit): Promise<Response> {
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -112,8 +122,10 @@ async function tryOnce(f: typeof fetch, entry: FormEntry, ticket: string): Promi
   } catch { return { kind: 'retry' }; }
   if (r.ok) return { kind: 'sent' };
   if (r.status >= 500 || r.status === 429 || r.status === 408) return { kind: 'retry' };
-  let error = '';
-  try { error = String(((await r.json()) as { error?: unknown }).error ?? ''); } catch { /* no body */ }
+  let body: { error?: unknown; code?: unknown } | null = null;
+  try { body = (await r.json()) as { error?: unknown; code?: unknown }; } catch { /* no body */ }
+  const error = String(body?.error ?? '');
+  if (isBotCheckRefusal(r.status, body)) return { kind: 'bot-check' };
   if (r.status === 400 && /open a long time|reload/i.test(error)) return { kind: 'stale-ticket' };
   return { kind: 'rejected', error: error || 'That didn’t send. Please check the form and try again.' };
 }
@@ -158,6 +170,8 @@ async function sendWithRetries(entry: FormEntry, opts: SendOptions): Promise<Sen
     const r = await tryOnce(f, entry, ticket.value);
     if (r.kind === 'sent') { dequeue(entry.id); return { status: 'sent' }; }
     if (r.kind === 'rejected') { dequeue(entry.id); return { status: 'rejected', error: r.error }; }
+    // The robot check: retrying now won't help. Keep the entry and show the email fallback.
+    if (r.kind === 'bot-check') { if (!fellBack) { fellBack = true; opts.onFallback?.(entry); } return { status: 'unsent' }; }
     if (r.kind === 'stale-ticket') {
       ticket = null;
       if (!freshTicketTried) { freshTicketTried = true; attempt--; continue; }

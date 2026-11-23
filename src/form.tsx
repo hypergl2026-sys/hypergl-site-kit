@@ -108,19 +108,31 @@ export function HyperGLForm(props: HyperGLFormProps) {
     setValues((v) => ({ ...auto, ...v }));
   }, [cfg]);
 
-  // Cloudflare Turnstile, only when HyperGL has it on.
+  // Cloudflare Turnstile, only when HyperGL has it on. If the widget can't load or
+  // errors (e.g. this domain isn't allowed), the form still sends without a token;
+  // a robot-check refusal then shows the email fallback and keeps the entry.
   const siteKey = cfg?.turnstileSiteKey ?? null;
   useEffect(() => {
     if (!siteKey || !turnstileEl.current) return;
     const draw = () => {
       if (window.turnstile && turnstileEl.current && !turnstileEl.current.childElementCount) {
-        window.turnstile.render(turnstileEl.current, { sitekey: siteKey, callback: (t: string) => { turnstileToken.current = t; } });
+        try {
+          window.turnstile.render(turnstileEl.current, {
+            sitekey: siteKey,
+            callback: (t: string) => { turnstileToken.current = t; },
+            'expired-callback': () => { turnstileToken.current = null; },
+            'timeout-callback': () => { turnstileToken.current = null; },
+            // Handled: no token; the send still goes out (see above).
+            'error-callback': () => { turnstileToken.current = null; return true; },
+          });
+        } catch { turnstileToken.current = null; }
       }
     };
     if (window.turnstile) { draw(); return; }
     const s = document.createElement('script');
     s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
     s.async = true; s.onload = draw;
+    s.onerror = () => { turnstileToken.current = null; };
     document.head.appendChild(s);
   }, [siteKey]);
 
@@ -162,7 +174,7 @@ export function HyperGLForm(props: HyperGLFormProps) {
     } else if (r.status === 'rejected') {
       setStatus('idle');
       setError(r.error);
-      window.turnstile?.reset();
+      try { window.turnstile?.reset(); } catch { /* no widget */ }
     }
     // 'unsent': the fallback is already showing, and the entry stays queued.
   }

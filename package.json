@@ -1,6 +1,6 @@
 {
   "name": "@hyperglllc/site-kit",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Connects a static Next.js website to HyperGL: page views, forms, booking, consent, and build-time posts and reviews.",
   "license": "MIT",
   "author": "HyperGL LLC",
